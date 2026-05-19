@@ -1,0 +1,33 @@
+#!/usr/bin/env sh
+
+echo "[0/5] Validating atomic folder structure..."
+npm run validate:atomic || {
+  echo "Atomic folder structure validation failed."
+  exit 1
+}
+
+echo "[1/5] Running ESLint + Prettier on staged files..."
+npx lint-staged || {
+  echo "lint-staged failed. Fix the errors above before committing."
+  exit 1
+}
+
+echo "[2/5] Running TypeScript type checking..."
+npm run type-check || {
+  echo "TypeScript check failed."
+  exit 1
+}
+
+echo "[3/5] Running tests..."
+npm test -- --passWithNoTests || {
+  echo "Tests failed."
+  exit 1
+}
+
+echo "[4/5] Checking Android debug build..."
+npm run build:android:debug || {
+  echo "Android debug build failed."
+  exit 1
+}
+
+echo "[5/5] All checks passed. Proceeding with commit."

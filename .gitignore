@@ -1,0 +1,11 @@
+node_modules/
+.admin.next/
+.env
+.env.local
+.venv/
+__pycache__/
+dist/
+build/
+.expo/
+*.pyc
+.DS_Store

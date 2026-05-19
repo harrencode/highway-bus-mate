@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Highway Bus Mate",
+    "slug": "highway-bus-mate",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.highwaybusmate.mobile"
+    },
+    "android": {
+      "package": "com.highwaybusmate.mobile"
+    },
+    "plugins": [
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "",
+          "enableGooglePay": false
+        }
+      ]
+    ]
+  }
+}

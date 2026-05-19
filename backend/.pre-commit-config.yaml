@@ -1,0 +1,140 @@
+repos:
+  # General file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: debug-statements
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # Remove unused imports and variables
+  - repo: https://github.com/PyCQA/autoflake
+    rev: v2.3.1
+    hooks:
+      - id: autoflake
+        args:
+          - --in-place
+          - --remove-all-unused-imports
+          - --remove-unused-variables
+          - --ignore-init-module-imports
+
+  # Import sorting
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ["--profile", "black", "--line-length", "100"]
+
+  # Code formatting
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        args: ["--line-length", "100"]
+
+  # Fast linting (replaces flake8 + pyupgrade)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+
+  # Type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - pydantic==2.9.2
+          - pydantic-settings==2.6.0
+          - sqlalchemy==2.0.36
+          - fastapi==0.115.0
+        args: ["--ignore-missing-imports", "--no-strict-optional"]
+        exclude: ^(alembic/|tests/)
+
+  # ── Architecture guards ────────────────────────────────────────────────────
+  # These four hooks enforce the project's layered architecture. A commit that
+  # violates any of these rules is rejected with a clear, actionable message.
+  - repo: local
+    hooks:
+      # 1. Routes must never raise exceptions — that belongs in the service layer.
+      - id: no-raise-in-routes
+        name: "[arch] no raise in route handlers"
+        entry: python scripts/checks/no_raise_in_routes.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      # 2. Services must not call db.query() directly — use the repository layer.
+      - id: no-raw-db-query-in-services
+        name: "[arch] no raw db.query() in services"
+        entry: python scripts/checks/no_raw_db_query_in_services.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      # 3. Schema files must use Pydantic v2 model_config, not class Config.
+      - id: no-pydantic-v1-config
+        name: "[arch] no Pydantic v1 class Config in schemas"
+        entry: python scripts/checks/no_pydantic_v1_config.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      # 4. Paginated routes must cap limit= with le= to prevent resource exhaustion.
+      - id: pagination-bounded
+        name: "[arch] limit Query params must have le= upper bound"
+        entry: python scripts/checks/pagination_bounded.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      # 5. Every public service method with a db param must catch SQLAlchemyError.
+      - id: service-sqlalchemy-guard
+        name: "[arch] service methods must handle SQLAlchemyError"
+        entry: python scripts/checks/service_sqlalchemy_guard.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      # 6. Every service module must declare a module-level logger.
+      - id: service-logger-required
+        name: "[arch] service modules must have a module-level logger"
+        entry: python scripts/checks/service_logger_required.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      # 7. Every source module (service, repository, route) must have test coverage.
+      - id: test-coverage-required
+        name: "[arch] every module must have a corresponding test file"
+        entry: python scripts/checks/test_coverage_required.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+  # Run tests
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: python -m pytest tests/ -q --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

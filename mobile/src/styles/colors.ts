@@ -1,0 +1,16 @@
+export const colors = {
+  brand: '#1A6B45',
+  brandMid: '#2D9E6B',
+  brandLight: '#E6F5EE',
+  brandDark: '#0D3D27',
+  amber: '#F5A623',
+  amberLight: '#FEF3DC',
+  bg: '#F4F6F5',
+  surface: '#FFFFFF',
+  line: 'rgba(17,27,22,0.09)',
+  text: '#111B16',
+  text2: '#4A6055',
+  text3: '#8FA89B',
+  red: '#D94040',
+  blue: '#2563EB',
+};

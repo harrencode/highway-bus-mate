@@ -1,0 +1,999 @@
+import React from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  Modal,
+  TouchableOpacity,
+} from 'react-native';
+import Config from 'react-native-config';
+import { apiClient, BusResponse, RouteResponse, TripResponse, SeatResponse, BookingResponse } from './services/api';
+
+type Tab = 'home' | 'search' | 'seats' | 'ticket' | 'profile' | 'contribute' | 'login';
+
+type SearchResult = {
+  trip: TripResponse;
+  route: RouteResponse;
+  bus: BusResponse;
+  departure: string;
+  arrival: string;
+  fare: number;
+  seats?: SeatResponse[];
+};
+
+const colors = {
+  brand: '#1A6B45',
+  brandMid: '#2D9E6B',
+  brandLight: '#E6F5EE',
+  brandDark: '#0D3D27',
+  amber: '#F5A623',
+  amberLight: '#FEF3DC',
+  bg: '#F4F6F5',
+  surface: '#FFFFFF',
+  line: 'rgba(17,27,22,0.09)',
+  text: '#111B16',
+  text2: '#4A6055',
+  text3: '#8FA89B',
+  red: '#D94040',
+  blue: '#2563EB',
+};
+
+const sampleRoutes: RouteResponse[] = [
+  {
+    id: 1,
+    origin: 'Matara',
+    destination: 'Colombo',
+    province_origin: 'Southern Province',
+    province_destination: 'Western Province',
+    estimated_minutes: 165,
+  },
+  {
+    id: 2,
+    origin: 'Galle',
+    destination: 'Kandy',
+    province_origin: 'Southern Province',
+    province_destination: 'Central Province',
+    estimated_minutes: 290,
+  },
+];
+
+const sampleBuses: BusResponse[] = [
+  {
+    id: 1,
+    registration_no: 'NB-2241',
+    operator_name: 'Kapila Transport',
+    operator_phone: '0771234567',
+    bus_type: 'AC_EXPRESS',
+    total_seats: 48,
+  },
+  {
+    id: 2,
+    registration_no: 'CP-1187',
+    operator_name: 'South Lanka Bus',
+    operator_phone: '0714567890',
+    bus_type: 'SEMI_LUXURY',
+    total_seats: 52,
+  },
+];
+
+const sampleTrips: TripResponse[] = [
+  { id: 1, schedule_id: 1, trip_date: '2026-04-27', available_seats: 8, status: 'SCHEDULED', is_cancelled: false },
+  { id: 2, schedule_id: 2, trip_date: '2026-04-27', available_seats: 22, status: 'SCHEDULED', is_cancelled: false },
+];
+
+function apiBase() {
+  const base = (Config.API_BASE_URL || Config.BASE_URL || 'http://10.0.2.2:8000').replace(/\/$/, '');
+  return base.endsWith('/api/v1') ? base : `${base}/api/v1`;
+}
+
+function formatBusType(type: string) {
+  return type
+    .toLowerCase()
+    .split('_')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function App() {
+  const [tab, setTab] = React.useState<Tab>('home');
+  const [origin, setOrigin] = React.useState('Matara');
+  const [destination, setDestination] = React.useState('Colombo');
+  const [tripDate, setTripDate] = React.useState(todayIso());
+  const [token, setToken] = React.useState('');
+  const [routes, setRoutes] = React.useState<RouteResponse[]>(sampleRoutes);
+  const [buses, setBuses] = React.useState<BusResponse[]>(sampleBuses);
+  const [trips, setTrips] = React.useState<TripResponse[]>(sampleTrips);
+  const [results, setResults] = React.useState<SearchResult[]>([]);
+  const [selectedResult, setSelectedResult] = React.useState<SearchResult | null>(null);
+  const [selectedSeats, setSelectedSeats] = React.useState<string[]>(['04', '08']);
+  const [bookingRef, setBookingRef] = React.useState('BM-20470');
+  const [loading, setLoading] = React.useState(false);
+  const [apiNote, setApiNote] = React.useState('Using local sample data until the backend responds.');
+  const [bookings, setBookings] = React.useState<BookingResponse[]>([]);
+  const [loginUsername, setLoginUsername] = React.useState('');
+  const [loginPassword, setLoginPassword] = React.useState('');
+  const [loginLoading, setLoginLoading] = React.useState(false);
+
+  const activeResult = selectedResult || results[0] || buildResults(sampleRoutes, sampleBuses, sampleTrips)[0];
+  const totalFare = selectedSeats.length * activeResult.fare;
+
+  React.useEffect(() => {
+    void loadHomeData();
+    if (token) {
+      apiClient.setToken(token);
+    }
+  }, [token]);
+
+  async function loadHomeData() {
+    try {
+      const [routeData, busData, tripData] = await Promise.all([
+        apiClient.searchRoutes(origin),
+        apiClient.searchBuses(origin),
+        apiClient.searchTrips(tripDate),
+      ]);
+      const nextRoutes = routeData?.items || [];
+      const nextBuses = busData?.items || [];
+      const nextTrips = tripData?.items || [];
+      setRoutes(nextRoutes.length ? nextRoutes : sampleRoutes);
+      setBuses(nextBuses.length ? nextBuses : sampleBuses);
+      setTrips(nextTrips.length ? nextTrips : sampleTrips);
+      setApiNote('Connected to backend public search endpoints.');
+    } catch (error) {
+      setApiNote(error instanceof Error ? error.message : 'Backend unavailable, showing sample data.');
+    }
+  }
+
+  async function searchTrips() {
+    setLoading(true);
+    try {
+      const [routeData, busData, tripData] = await Promise.all([
+        apiClient.searchRoutes(`${origin} ${destination}`),
+        apiClient.searchBuses(origin),
+        apiClient.searchTrips(tripDate),
+      ]);
+      const nextRoutes = routeData?.items || [];
+      const nextBuses = busData?.items || [];
+      const nextTrips = tripData?.items || [];
+      const composed = buildResults(
+        nextRoutes.length ? nextRoutes : routes,
+        nextBuses.length ? nextBuses : buses,
+        nextTrips.length ? nextTrips : trips,
+      );
+      setResults(composed);
+      setSelectedResult(composed[0] || null);
+      setTab('search');
+      setApiNote('Results refreshed from /routes, /buses, and /trips public endpoints.');
+    } catch (error) {
+      const composed = buildResults(routes, buses, trips);
+      setResults(composed);
+      setSelectedResult(composed[0] || null);
+      setTab('search');
+      setApiNote(error instanceof Error ? error.message : 'Could not reach backend.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLogin() {
+    setLoginLoading(true);
+    try {
+      const tokenData = await apiClient.login(loginUsername, loginPassword);
+      apiClient.setToken(tokenData.access_token);
+      setToken(tokenData.access_token);
+      setTab('home');
+      Alert.alert('Login successful', 'Welcome!');
+    } catch (error) {
+      Alert.alert('Login failed', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function createBooking() {
+    if (!token.trim()) {
+      Alert.alert('Authentication required', 'Please log in first to create bookings.');
+      setTab('login');
+      return;
+    }
+    setLoading(true);
+    try {
+      const booking = await apiClient.createBooking({
+        trip_id: activeResult.trip.id,
+        seat_ids: [],
+        total_fare: totalFare,
+      });
+      setBookingRef(booking.booking_ref);
+      setTab('ticket');
+      Alert.alert('Booking created', `Reference: ${booking.booking_ref}`);
+    } catch (error) {
+      Alert.alert('Booking failed', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadBookings() {
+    if (!token.trim()) {
+      Alert.alert('Authentication required', 'Please log in first to view your bookings.');
+      setTab('login');
+      return;
+    }
+    setLoading(true);
+    try {
+      const myBookings = await apiClient.listMyBookings();
+      setBookings(myBookings);
+      setApiNote('Loaded your bookings from /bookings/me.');
+    } catch (error) {
+      Alert.alert('Could not load bookings', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitContribution(payload: Record<string, string>) {
+    if (!token.trim()) {
+      Alert.alert('Authentication required', 'Please log in first to submit contributions.');
+      setTab('login');
+      return;
+    }
+    setLoading(true);
+    try {
+      await apiClient.submitContribution({
+        type: 'update_bus_info',
+        payload,
+        notes: payload.notes || undefined,
+      });
+      Alert.alert('Submitted', 'Your update was sent for review.');
+    } catch (error) {
+      Alert.alert('Submission failed', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleLogout() {
+    setToken('');
+    apiClient.clearToken();
+    setTab('home');
+    Alert.alert('Logged out', 'You have been logged out.');
+  }
+
+  return (
+    <SafeAreaView style={styles.app}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.brandDark} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.app}>
+        {tab === 'login' && (
+          <LoginScreen
+            username={loginUsername}
+            password={loginPassword}
+            setUsername={setLoginUsername}
+            setPassword={setLoginPassword}
+            onLogin={handleLogin}
+            loading={loginLoading}
+            onBack={() => setTab('home')}
+          />
+        )}
+        {tab === 'home' && (
+          <HomeScreen
+            origin={origin}
+            destination={destination}
+            tripDate={tripDate}
+            setOrigin={setOrigin}
+            setDestination={setDestination}
+            setTripDate={setTripDate}
+            searchTrips={searchTrips}
+            routes={routes}
+            trips={trips}
+            bookings={bookings}
+            loading={loading}
+            apiNote={apiNote}
+            isLoggedIn={!!token}
+            onLoginTap={() => setTab('login')}
+          />
+        )}
+        {tab === 'search' && (
+          <SearchScreen
+            origin={origin}
+            destination={destination}
+            tripDate={tripDate}
+            results={results.length ? results : buildResults(routes, buses, trips)}
+            onBack={() => setTab('home')}
+            onChooseSeats={result => {
+              setSelectedResult(result);
+              setTab('seats');
+            }}
+          />
+        )}
+        {tab === 'seats' && activeResult && (
+          <SeatSelectionScreen
+            result={activeResult}
+            selectedSeats={selectedSeats}
+            setSelectedSeats={setSelectedSeats}
+            totalFare={totalFare}
+            onBack={() => setTab('search')}
+            onProceed={() => setTab('ticket')}
+          />
+        )}
+        {tab === 'ticket' && activeResult && (
+          <TicketScreen
+            result={activeResult}
+            selectedSeats={selectedSeats}
+            totalFare={totalFare}
+            bookingRef={bookingRef}
+            createBooking={createBooking}
+            loading={loading}
+            onBack={() => setTab('seats')}
+          />
+        )}
+        {tab === 'profile' && (
+          <ProfileScreen
+            isLoggedIn={!!token}
+            token={token}
+            setToken={setToken}
+            bookings={bookings}
+            loadBookings={loadBookings}
+            loading={loading}
+            onLogout={handleLogout}
+            onLogin={() => setTab('login')}
+          />
+        )}
+        {tab === 'contribute' && (
+          <ContributeScreen
+            submitContribution={submitContribution}
+            loading={loading}
+            isLoggedIn={!!token}
+            onLoginRequired={() => setTab('login')}
+          />
+        )}
+        <BottomNav tab={tab} setTab={setTab} />
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+function buildResults(routeList: RouteResponse[], busList: BusResponse[], tripList: TripResponse[]): SearchResult[] {
+  const sourceTrips = tripList.length ? tripList : sampleTrips;
+  const sourceRoutes = routeList.length ? routeList : sampleRoutes;
+  const sourceBuses = busList.length ? busList : sampleBuses;
+  return sourceTrips.slice(0, 8).map((trip, index) => {
+    const route = sourceRoutes[index % sourceRoutes.length];
+    const bus = sourceBuses[index % sourceBuses.length];
+    const fare = bus.bus_type.includes('AC') ? 450 : 320;
+    const startHour = 6 + index;
+    const minutes = route.estimated_minutes || 165;
+    const arrivalHour = startHour + Math.floor(minutes / 60);
+    const arrivalMinute = minutes % 60;
+    return {
+      trip,
+      route,
+      bus,
+      fare,
+      departure: `${String(startHour).padStart(2, '0')}:${index % 2 ? '15' : '30'}`,
+      arrival: `${String(arrivalHour).padStart(2, '0')}:${String(arrivalMinute).padStart(2, '0')}`,
+    };
+  });
+}
+
+function HomeScreen(props: {
+  origin: string;
+  destination: string;
+  tripDate: string;
+  setOrigin: (value: string) => void;
+  setDestination: (value: string) => void;
+  setTripDate: (value: string) => void;
+  searchTrips: () => void;
+  routes: RouteResponse[];
+  trips: TripResponse[];
+  bookings: BookingResponse[];
+  loading: boolean;
+  apiNote: string;
+  isLoggedIn: boolean;
+  onLoginTap: () => void;
+}) {
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollPad}>
+      <View style={styles.hero}>
+        <View style={styles.logoRow}>
+          <Text style={styles.logo}>Bus<Text style={{ color: colors.amber }}>Mate</Text></Text>
+          <View style={styles.bell}><Text style={styles.bellText}>🔔</Text></View>
+        </View>
+        <Text style={styles.greeting}>Good morning,</Text>
+        <Text style={styles.greetingName}>Kasun Perera 👋</Text>
+      </View>
+
+      <View style={styles.searchCard}>
+        <Text style={styles.cardTitle}>Where are you going?</Text>
+        <Input label="From" value={props.origin} onChangeText={props.setOrigin} />
+        <Input label="To" value={props.destination} onChangeText={props.setDestination} />
+        <Input label="Date" value={props.tripDate} onChangeText={props.setTripDate} />
+        <Pressable style={styles.primaryButton} onPress={props.searchTrips}>
+          {props.loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Find buses</Text>}
+        </Pressable>
+      </View>
+
+      <SectionTitle title="Saved routes" action="See all" />
+      <View style={styles.chipRow}>
+        {props.routes.slice(0, 2).map(route => (
+          <View style={styles.chip} key={route.id}>
+            <Text style={styles.chipText}>⭐ {route.origin} → {route.destination}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.statGrid}>
+        <StatCard value={String(props.bookings.length)} label="Active bookings" accent="green" />
+        <StatCard value={String(props.routes.length)} label="Routes available" accent="amber" />
+        <StatCard value={String(props.trips.length)} label="Trips available" accent="blue" />
+        <StatCard value="6" label="Screens ready" accent="green" />
+      </View>
+
+      {!props.isLoggedIn && (
+        <View style={styles.ctaCard}>
+          <Text style={styles.ctaTitle}>Ready to explore?</Text>
+          <Text style={styles.ctaMeta}>Log in to book buses and manage your trips</Text>
+          <Pressable style={styles.primaryButton} onPress={props.onLoginTap}>
+            <Text style={styles.primaryText}>Log in now →</Text>
+          </Pressable>
+        </View>
+      )}
+
+      <Text style={styles.apiNote}>{props.apiNote}</Text>
+    </ScrollView>
+  );
+}
+
+function SearchScreen(props: {
+  return (
+    <View style={styles.screen}>
+      <View style={styles.resultsHeader}>
+        <Pressable onPress={props.onBack}><Text style={styles.backText}>Back</Text></Pressable>
+        <Text style={styles.headerRoute}>{props.origin} to {props.destination}</Text>
+        <Text style={styles.headerMeta}>{props.tripDate} - {props.results.length} buses found</Text>
+        <View style={styles.filterRow}>
+          {['All', 'Earliest', 'Cheapest', 'AC only'].map((filter, index) => (
+            <View key={filter} style={[styles.filterPill, index === 0 && styles.filterPillActive]}>
+              <Text style={[styles.filterText, index === 0 && styles.filterTextActive]}>{filter}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+      <ScrollView contentContainerStyle={styles.listPad}>
+        {props.results.map(result => (
+          <BusCard key={`${result.trip.id}-${result.bus.id}`} result={result} onPress={() => props.onChooseSeats(result)} />
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function BusCard({result, onPress}: {result: SearchResult; onPress: () => void}) {
+  const duration = result.route.estimated_minutes
+    ? `${Math.floor(result.route.estimated_minutes / 60)}h ${result.route.estimated_minutes % 60}m`
+    : '2h 45m';
+  return (
+    <View style={styles.busCard}>
+      <View style={styles.busTop}>
+        <View style={styles.flex}>
+          <Text style={styles.busNo}>{result.bus.registration_no} - {formatBusType(result.bus.bus_type)}</Text>
+          <Text style={styles.muted}>{result.bus.operator_name}</Text>
+        </View>
+        <View>
+          <Text style={styles.price}>Rs. {result.fare}</Text>
+          <Text style={styles.priceLabel}>per seat</Text>
+        </View>
+      </View>
+      <View style={styles.seatsBadge}>
+        <Text style={styles.seatsBadgeText}>{result.trip.available_seats} seats left</Text>
+      </View>
+      <View style={styles.timeRow}>
+        <View style={styles.timeBlock}>
+          <Text style={styles.timeText}>{result.departure}</Text>
+          <Text style={styles.mutedSmall}>{result.route.origin}</Text>
+        </View>
+        <View style={styles.durationLine}>
+          <View style={styles.line} />
+          <Text style={styles.mutedTiny}>{duration}</Text>
+        </View>
+        <View style={styles.timeBlock}>
+          <Text style={styles.timeText}>{result.arrival}</Text>
+          <Text style={styles.mutedSmall}>{result.route.destination}</Text>
+        </View>
+      </View>
+      <View style={styles.actionRow}>
+        <Pressable style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Call</Text></Pressable>
+        <Pressable style={styles.secondaryAction}><Text style={styles.secondaryActionText}>Save</Text></Pressable>
+        <Pressable style={styles.bookAction} onPress={onPress}><Text style={styles.bookActionText}>Book seat</Text></Pressable>
+      </View>
+    </View>
+  );
+}
+
+function TicketScreen(props: {
+  result: SearchResult;
+  selectedSeats: string[];
+  setSelectedSeats: (value: string[]) => void;
+  totalFare: number;
+  bookingRef: string;
+  createBooking: () => void;
+  loading: boolean;
+}) {
+  const booked = new Set(['01', '02', '06', '10', '15', '16']);
+  const toggleSeat = (seat: string) => {
+    if (booked.has(seat)) {
+      return;
+    }
+    props.setSelectedSeats(
+      props.selectedSeats.includes(seat)
+        ? props.selectedSeats.filter(item => item !== seat)
+        : [...props.selectedSeats, seat],
+    );
+  };
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollPad}>
+      <View style={styles.seatHeader}>
+        <Text style={styles.headerRoute}>Choose your seats</Text>
+        <Text style={styles.headerMeta}>
+          {props.result.bus.registration_no} - {props.result.route.origin} to {props.result.route.destination}
+        </Text>
+      </View>
+      <View style={styles.legendRow}>
+        <Legend color={colors.brandLight} label="Available" />
+        <Legend color={colors.brand} label="Selected" />
+        <Legend color="#EAF0EC" label="Booked" />
+      </View>
+      <View style={styles.busFrame}>
+        <View style={styles.driverRow}>
+          <Text style={styles.driverTag}>Driver</Text>
+          <Text style={styles.doorTag}>Door</Text>
+        </View>
+        <View style={styles.seatGrid}>
+          {Array.from({length: 18}).map((_, index) => {
+            const seat = String(index + 1).padStart(2, '0');
+            const selected = props.selectedSeats.includes(seat);
+            const disabled = booked.has(seat);
+            return (
+              <Pressable
+                key={seat}
+                style={[styles.seat, selected && styles.seatSelected, disabled && styles.seatBooked]}
+                onPress={() => toggleSeat(seat)}>
+                <Text style={[styles.seatText, selected && styles.seatTextSelected, disabled && styles.seatTextBooked]}>
+                  {seat}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.summaryCard}>
+        <SummaryRow label="Selected seats" value={props.selectedSeats.join(', ') || 'None'} />
+        <SummaryRow label="Fare per seat" value={`Rs. ${props.result.fare}`} />
+        <SummaryRow label="Total" value={`Rs. ${props.totalFare}`} strong />
+      </View>
+
+      <View style={styles.ticketCard}>
+        <View style={styles.ticketTop}>
+          <View>
+            <Text style={styles.ticketCity}>{props.result.route.origin}</Text>
+            <Text style={styles.mutedTiny}>{props.result.route.province_origin || 'Origin'}</Text>
+          </View>
+          <Text style={styles.ticketIcon}>BUS</Text>
+          <View style={styles.alignRight}>
+            <Text style={styles.ticketCity}>{props.result.route.destination}</Text>
+            <Text style={styles.mutedTiny}>{props.result.route.province_destination || 'Destination'}</Text>
+          </View>
+        </View>
+        <View style={styles.ticketDetails}>
+          <SummaryRow label="Booking ID" value={props.bookingRef} />
+          <SummaryRow label="Bus No." value={props.result.bus.registration_no} />
+          <SummaryRow label="Operator" value={props.result.bus.operator_name} />
+          <SummaryRow label="Time" value={`${props.result.departure} - ${props.result.arrival}`} />
+        </View>
+        <View style={styles.qrRow}>
+          <View style={styles.qrBox}>
+            {Array.from({length: 25}).map((_, index) => <View key={index} style={[styles.qrCell, index % 3 === 0 && styles.qrCellOff]} />)}
+          </View>
+          <Text style={styles.qrText}>Show this ticket to the conductor for verification.</Text>
+        </View>
+      </View>
+      <Pressable style={styles.primaryButton} onPress={props.createBooking}>
+        {props.loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Create booking</Text>}
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function ProfileScreen(props: {
+  token: string;
+  setToken: (value: string) => void;
+  bookings: BookingItem[];
+  loadBookings: () => void;
+  loading: boolean;
+}) {
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollPad}>
+      <View style={styles.profileHeader}>
+        <View style={styles.avatar}><Text style={styles.avatarText}>KP</Text></View>
+        <Text style={styles.profileName}>Kasun Perera</Text>
+        <Text style={styles.profilePhone}>Use a backend JWT to unlock account endpoints</Text>
+        <View style={styles.profileStats}>
+          <StatMini value="12" label="Trips" />
+          <StatMini value={String(props.bookings.length)} label="Loaded" />
+          <StatMini value="5" label="Saved" />
+        </View>
+      </View>
+      <View style={styles.searchCard}>
+        <Input label="Access token" value={props.token} onChangeText={props.setToken} secureTextEntry />
+        <Pressable style={styles.primaryButton} onPress={props.loadBookings}>
+          {props.loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Load my bookings</Text>}
+        </Pressable>
+      </View>
+      <SectionTitle title="My bookings" action="/bookings/me" />
+      {(props.bookings.length ? props.bookings : demoBookings()).map(booking => (
+        <View style={styles.bookingItem} key={booking.id}>
+          <View style={styles.bookingDot} />
+          <View style={styles.flex}>
+            <Text style={styles.bookingRoute}>Trip #{booking.trip_id}</Text>
+            <Text style={styles.mutedSmall}>{booking.booking_ref} - {booking.payment_status}</Text>
+          </View>
+          <View style={styles.alignRight}>
+            <Text style={styles.price}>Rs. {booking.total_fare}</Text>
+            <Text style={styles.statusPill}>{booking.status}</Text>
+          </View>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function ContributeScreen(props: {submitContribution: (payload: Record<string, string>) => void; loading: boolean}) {
+  const [from, setFrom] = React.useState('Matara');
+  const [to, setTo] = React.useState('Colombo');
+  const [busNo, setBusNo] = React.useState('NB-2241');
+  const [departure, setDeparture] = React.useState('06:30');
+  const [notes, setNotes] = React.useState('');
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollPad}>
+      <View style={styles.resultsHeader}>
+        <Text style={styles.headerRoute}>Contribute</Text>
+        <Text style={styles.headerMeta}>Help keep route info accurate</Text>
+      </View>
+      {[
+        ['Add new route', 'Suggest a highway bus route not listed yet'],
+        ['Add new bus', 'Add a bus that operates on an existing route'],
+        ['Update bus info', 'Correct schedule, price, or operator details'],
+      ].map(([title, description], index) => (
+        <View style={styles.contributeOption} key={title}>
+          <View style={[styles.optionIcon, index === 1 && styles.optionIconAmber, index === 2 && styles.optionIconBlue]}>
+            <Text style={styles.optionIconText}>{index + 1}</Text>
+          </View>
+          <View style={styles.flex}>
+            <Text style={styles.optionTitle}>{title}</Text>
+            <Text style={styles.mutedSmall}>{description}</Text>
+          </View>
+          <Text style={styles.chevron}>&gt;</Text>
+        </View>
+      ))}
+      <View style={styles.searchCard}>
+        <Text style={styles.cardTitle}>Quick update form</Text>
+        <Input label="From" value={from} onChangeText={setFrom} />
+        <Input label="To" value={to} onChangeText={setTo} />
+        <Input label="Bus No." value={busNo} onChangeText={setBusNo} />
+        <Input label="Departure time" value={departure} onChangeText={setDeparture} />
+        <Input label="Notes" value={notes} onChangeText={setNotes} />
+        <Pressable style={styles.primaryButton} onPress={() => props.submitContribution({from, to, busNo, departure, notes})}>
+          {props.loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Submit for review</Text>}
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+}
+
+function Input(props: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  secureTextEntry?: boolean;
+}) {
+  return (
+    <View style={styles.inputWrap}>
+      <Text style={styles.inputLabel}>{props.label}</Text>
+      <TextInput
+        value={props.value}
+        onChangeText={props.onChangeText}
+        secureTextEntry={props.secureTextEntry}
+        placeholderTextColor={colors.text3}
+        style={styles.input}
+      />
+    </View>
+  );
+}
+
+function SectionTitle({title, action}: {title: string; action: string}) {
+  return (
+    <View style={styles.sectionRow}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.seeAll}>{action}</Text>
+    </View>
+  );
+}
+
+function StatCard({value, label, accent}: {value: string; label: string; accent: 'green' | 'amber' | 'blue'}) {
+  return (
+    <View style={styles.statCard}>
+      <View style={[styles.statDot, accent === 'amber' && styles.statDotAmber, accent === 'blue' && styles.statDotBlue]} />
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function StatMini({value, label}: {value: string; label: string}) {
+  return (
+    <View style={styles.statMini}>
+      <Text style={styles.statMiniValue}>{value}</Text>
+      <Text style={styles.statMiniLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function Legend({color, label}: {color: string; label: string}) {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, {backgroundColor: color}]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
+function SummaryRow({label, value, strong}: {label: string; value: string; strong?: boolean}) {
+  return (
+    <View style={[styles.summaryRow, strong && styles.summaryRowStrong]}>
+      <Text style={[styles.summaryLabel, strong && styles.summaryStrong]}>{label}</Text>
+      <Text style={[styles.summaryValue, strong && styles.summaryStrong]}>{value}</Text>
+    </View>
+  );
+}
+
+function BottomNav({tab, setTab}: {tab: Tab; setTab: (tab: Tab) => void}) {
+  const items: Array<[Tab, string]> = [
+    ['home', 'Home'],
+    ['search', 'Search'],
+    ['ticket', 'Tickets'],
+    ['profile', 'Profile'],
+    ['contribute', 'Add'],
+  ];
+  return (
+    <View style={styles.bottomNav}>
+      {items.map(([key, label]) => (
+        <Pressable key={key} style={styles.navItem} onPress={() => setTab(key)}>
+          <View style={[styles.navIcon, tab === key && styles.navIconActive]} />
+          <Text style={[styles.navText, tab === key && styles.navTextActive]}>{label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function demoBookings(): BookingItem[] {
+  return [
+    {
+      id: 1,
+      booking_ref: 'BM-20470',
+      trip_id: 1,
+      total_fare: '900',
+      status: 'CONFIRMED',
+      payment_status: 'PAID',
+      booked_at: '2026-04-27T06:30:00',
+    },
+    {
+      id: 2,
+      booking_ref: 'BM-20471',
+      trip_id: 2,
+      total_fare: '550',
+      status: 'PENDING',
+      payment_status: 'UNPAID',
+      booked_at: '2026-04-27T07:15:00',
+    },
+  ];
+}
+
+const styles = StyleSheet.create({
+  app: {flex: 1, backgroundColor: colors.bg},
+  screen: {flex: 1, backgroundColor: colors.bg},
+  scrollPad: {paddingBottom: 104},
+  hero: {
+    backgroundColor: colors.brandDark,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+  },
+  logoRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18},
+  logo: {fontSize: 21, fontWeight: '800', color: '#fff'},
+  bell: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bellText: {color: colors.amber, fontWeight: '900'},
+  greeting: {fontSize: 13, color: 'rgba(255,255,255,0.66)'},
+  greetingName: {fontSize: 24, lineHeight: 31, fontWeight: '800', color: '#fff', marginTop: 4},
+  searchCard: {
+    margin: 16,
+    marginTop: -14,
+    backgroundColor: colors.surface,
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 3,
+  },
+  cardTitle: {fontSize: 14, fontWeight: '800', color: colors.text2, marginBottom: 12},
+  inputWrap: {marginBottom: 10},
+  inputLabel: {fontSize: 11, color: colors.text3, marginBottom: 5, fontWeight: '700'},
+  input: {
+    minHeight: 44,
+    borderRadius: 10,
+    backgroundColor: colors.bg,
+    paddingHorizontal: 12,
+    color: colors.text,
+    fontWeight: '600',
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  primaryButton: {
+    minHeight: 48,
+    borderRadius: 12,
+    backgroundColor: colors.brand,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+  },
+  primaryText: {color: '#fff', fontSize: 15, fontWeight: '800'},
+  sectionRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginTop: 8, marginBottom: 10},
+  sectionTitle: {fontSize: 15, fontWeight: '800', color: colors.text},
+  seeAll: {fontSize: 12, fontWeight: '700', color: colors.brandMid},
+  chipRow: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16},
+  chip: {backgroundColor: colors.brandLight, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12},
+  chipText: {color: colors.brand, fontSize: 12, fontWeight: '800'},
+  statGrid: {paddingHorizontal: 16, marginTop: 16, flexDirection: 'row', flexWrap: 'wrap', gap: 10},
+  statCard: {width: '48%', backgroundColor: colors.surface, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.line},
+  statDot: {width: 24, height: 5, borderRadius: 999, backgroundColor: colors.brandMid, marginBottom: 12},
+  statDotAmber: {backgroundColor: colors.amber},
+  statDotBlue: {backgroundColor: colors.blue},
+  statValue: {fontSize: 20, fontWeight: '900', color: colors.text},
+  statLabel: {fontSize: 11, color: colors.text3, marginTop: 2},
+  apiNote: {paddingHorizontal: 16, marginTop: 16, color: colors.text2, fontSize: 12, lineHeight: 18},
+  resultsHeader: {backgroundColor: colors.brand, paddingHorizontal: 16, paddingTop: 18, paddingBottom: 16},
+  backText: {color: '#fff', fontWeight: '800', marginBottom: 10},
+  headerRoute: {fontSize: 18, color: '#fff', fontWeight: '900'},
+  headerMeta: {fontSize: 12, color: 'rgba(255,255,255,0.72)', marginTop: 3},
+  filterRow: {flexDirection: 'row', gap: 8, marginTop: 14},
+  filterPill: {borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.14)', paddingHorizontal: 12, paddingVertical: 7},
+  filterPillActive: {backgroundColor: '#fff'},
+  filterText: {fontSize: 11, color: '#fff', fontWeight: '700'},
+  filterTextActive: {color: colors.brand},
+  listPad: {padding: 12, paddingBottom: 96},
+  busCard: {backgroundColor: colors.surface, borderRadius: 16, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: colors.line},
+  busTop: {flexDirection: 'row', justifyContent: 'space-between', gap: 12},
+  flex: {flex: 1},
+  busNo: {fontSize: 15, fontWeight: '900', color: colors.text},
+  muted: {fontSize: 12, color: colors.text3, marginTop: 3},
+  price: {fontSize: 17, fontWeight: '900', color: colors.brand},
+  priceLabel: {fontSize: 10, color: colors.text3, textAlign: 'right'},
+  seatsBadge: {alignSelf: 'flex-start', backgroundColor: colors.amberLight, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, marginTop: 10},
+  seatsBadgeText: {fontSize: 11, color: '#9A690B', fontWeight: '800'},
+  timeRow: {flexDirection: 'row', alignItems: 'center', marginTop: 14},
+  timeBlock: {flex: 1, alignItems: 'center'},
+  timeText: {fontSize: 18, fontWeight: '900', color: colors.text},
+  mutedSmall: {fontSize: 11, color: colors.text3, marginTop: 2},
+  mutedTiny: {fontSize: 10, color: colors.text3, marginTop: 2},
+  durationLine: {flex: 1.1, alignItems: 'center'},
+  line: {height: 1, width: '100%', backgroundColor: colors.line, marginBottom: 5},
+  actionRow: {flexDirection: 'row', gap: 8, borderTopWidth: 1, borderTopColor: colors.line, marginTop: 14, paddingTop: 12},
+  secondaryAction: {flex: 1, backgroundColor: colors.bg, borderRadius: 10, alignItems: 'center', paddingVertical: 10},
+  secondaryActionText: {fontSize: 12, color: colors.text2, fontWeight: '800'},
+  bookAction: {flex: 1.8, backgroundColor: colors.brand, borderRadius: 10, alignItems: 'center', paddingVertical: 10},
+  bookActionText: {fontSize: 12, color: '#fff', fontWeight: '900'},
+  seatHeader: {backgroundColor: colors.brandDark, padding: 18},
+  legendRow: {flexDirection: 'row', justifyContent: 'center', gap: 14, paddingVertical: 14},
+  legendItem: {flexDirection: 'row', alignItems: 'center', gap: 6},
+  legendDot: {width: 12, height: 12, borderRadius: 3, borderWidth: 1, borderColor: colors.line},
+  legendText: {fontSize: 11, color: colors.text2, fontWeight: '700'},
+  busFrame: {marginHorizontal: 16, backgroundColor: '#EDF2EF', borderRadius: 20, padding: 14},
+  driverRow: {flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14},
+  driverTag: {backgroundColor: '#fff', color: colors.text3, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7, fontSize: 11},
+  doorTag: {backgroundColor: colors.brandLight, color: colors.brand, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7, fontSize: 11, fontWeight: '800'},
+  seatGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 8},
+  seat: {
+    width: '21.8%',
+    aspectRatio: 1,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.brandLight,
+    borderWidth: 1,
+    borderColor: colors.brandMid,
+  },
+  seatSelected: {backgroundColor: colors.brand, borderColor: colors.brand},
+  seatBooked: {backgroundColor: '#EAF0EC', borderColor: colors.line},
+  seatText: {fontSize: 12, fontWeight: '900', color: colors.brand},
+  seatTextSelected: {color: '#fff'},
+  seatTextBooked: {color: colors.text3},
+  summaryCard: {margin: 16, backgroundColor: colors.surface, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.line},
+  summaryRow: {flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8},
+  summaryRowStrong: {borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 10, marginTop: 2},
+  summaryLabel: {fontSize: 13, color: colors.text2},
+  summaryValue: {fontSize: 13, color: colors.brand, fontWeight: '900'},
+  summaryStrong: {fontSize: 15, color: colors.text, fontWeight: '900'},
+  ticketCard: {marginHorizontal: 16, backgroundColor: colors.surface, borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: colors.line},
+  ticketTop: {backgroundColor: colors.brandLight, padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
+  ticketCity: {fontSize: 18, color: colors.brandDark, fontWeight: '900'},
+  ticketIcon: {fontSize: 13, color: colors.brand, fontWeight: '900'},
+  alignRight: {alignItems: 'flex-end'},
+  ticketDetails: {padding: 16},
+  qrRow: {margin: 16, marginTop: 0, backgroundColor: colors.bg, borderRadius: 14, padding: 12, flexDirection: 'row', gap: 12, alignItems: 'center'},
+  qrBox: {width: 64, height: 64, backgroundColor: '#fff', borderRadius: 8, padding: 5, flexDirection: 'row', flexWrap: 'wrap', gap: 2},
+  qrCell: {width: 8, height: 8, backgroundColor: colors.text, borderRadius: 1},
+  qrCellOff: {backgroundColor: 'transparent'},
+  qrText: {flex: 1, color: colors.text2, fontSize: 12, lineHeight: 18},
+  profileHeader: {backgroundColor: colors.brandDark, padding: 18},
+  avatar: {width: 58, height: 58, borderRadius: 29, backgroundColor: colors.amber, alignItems: 'center', justifyContent: 'center', marginBottom: 12},
+  avatarText: {color: colors.brandDark, fontSize: 20, fontWeight: '900'},
+  profileName: {color: '#fff', fontSize: 20, fontWeight: '900'},
+  profilePhone: {color: 'rgba(255,255,255,0.64)', marginTop: 4, fontSize: 12},
+  profileStats: {flexDirection: 'row', marginTop: 16, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 16, overflow: 'hidden'},
+  statMini: {flex: 1, alignItems: 'center', paddingVertical: 12},
+  statMiniValue: {color: '#fff', fontSize: 18, fontWeight: '900'},
+  statMiniLabel: {color: 'rgba(255,255,255,0.56)', fontSize: 10},
+  bookingItem: {marginHorizontal: 16, marginBottom: 10, backgroundColor: colors.surface, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.line, flexDirection: 'row', alignItems: 'center', gap: 10},
+  bookingDot: {width: 9, height: 9, borderRadius: 5, backgroundColor: colors.brandMid},
+  bookingRoute: {fontSize: 14, fontWeight: '900', color: colors.text},
+  statusPill: {overflow: 'hidden', borderRadius: 999, backgroundColor: colors.brandLight, color: colors.brand, fontSize: 10, paddingHorizontal: 8, paddingVertical: 4, fontWeight: '900'},
+  contributeOption: {marginHorizontal: 16, marginTop: 12, backgroundColor: colors.surface, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.line, flexDirection: 'row', alignItems: 'center', gap: 12},
+  optionIcon: {width: 42, height: 42, borderRadius: 11, backgroundColor: colors.brandLight, alignItems: 'center', justifyContent: 'center'},
+  optionIconAmber: {backgroundColor: colors.amberLight},
+  optionIconBlue: {backgroundColor: '#EFF4FF'},
+  optionIconText: {fontSize: 16, fontWeight: '900', color: colors.brand},
+  optionTitle: {fontSize: 14, fontWeight: '900', color: colors.text},
+  chevron: {fontSize: 26, color: colors.text3},
+  bottomNav: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 10,
+  },
+  navItem: {flex: 1, alignItems: 'center', gap: 4},
+  navIcon: {width: 20, height: 4, borderRadius: 999, backgroundColor: '#D8E2DD'},
+  navIconActive: {backgroundColor: colors.brand},
+  navText: {fontSize: 10, fontWeight: '800', color: colors.text3},
+  navTextActive: {color: colors.brand},
+});
+
+export default App;
